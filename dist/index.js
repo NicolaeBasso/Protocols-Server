@@ -29,14 +29,20 @@ const http = __importStar(require("http"));
 const WebSocket = __importStar(require("ws"));
 const httpPort = 4000;
 const wsPort = 4001;
-const app = (0, express_1.default)();
-app.use((0, cors_1.default)());
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
-app.get('/', (_, res) => {
+let broadcaster;
+const expressApp = (0, express_1.default)();
+expressApp.use((0, cors_1.default)());
+expressApp.use(function (req, res, next) {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    next();
+});
+const httpServer = http.createServer(expressApp);
+const wss = new WebSocket.Server({ server: httpServer });
+expressApp.get('/', (_, res) => {
     res.status(200).send('Server is up!');
 });
-app.get('/random', (_, res) => {
+expressApp.get('/random', (_, res) => {
     console.log(`/random requested at ${new Date(Date.now())}`);
     res.status(200).send({ randomNumber: (0, random_1.generateRandomNumber)() });
 });
@@ -53,12 +59,42 @@ wss.on('connection', function connection(ws) {
             });
         }
         else {
-            ws.send(data.toString() + ' => WS server response');
+            ws.send(data.toString() + ' => WS httpServer response');
         }
     });
 });
-app.listen(httpPort, () => console.log(`HTTP server started on port ${httpPort}`));
-server.listen(wsPort, () => {
-    console.log(`WS server started on port ${wsPort}`);
+const io = require('socket.io')(httpServer, {
+    cors: {
+        origin: "http://localhost:3000",
+        methods: ["GET", "POST"]
+    }
+});
+io.use((0, cors_1.default)());
+expressApp.use(express_1.default.static(__dirname + '/public'));
+io.sockets.on('error', (e) => console.log(e));
+io.sockets.on('connection', (socket) => {
+    socket.on('broadcaster', () => {
+        broadcaster = socket.id;
+        socket.broadcast.emit('broadcaster');
+    });
+    socket.on('watcher', () => {
+        socket.to(broadcaster).emit('watcher', socket.id);
+    });
+    socket.on('offer', (id, message) => {
+        socket.to(id).emit('offer', socket.id, message);
+    });
+    socket.on('answer', (id, message) => {
+        socket.to(id).emit('answer', socket.id, message);
+    });
+    socket.on('candidate', (id, message) => {
+        socket.to(id).emit('candidate', socket.id, message);
+    });
+    socket.on('disconnect', () => {
+        socket.to(broadcaster).emit('disconnectPeer', socket.id);
+    });
+});
+expressApp.listen(httpPort, () => console.log(`HTTP listening on port ${httpPort}`));
+httpServer.listen(wsPort, () => {
+    console.log(`WS listening on port ${wsPort}`);
 });
 //# sourceMappingURL=index.js.map
